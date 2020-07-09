@@ -2,9 +2,9 @@
 
 namespace MichielKempen\NovaPolymorphicField;
 
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Laravel\Nova\Fields\Field;
 use Laravel\Nova\Http\Requests\NovaRequest;
-use Illuminate\Database\Eloquent\Relations\Relation;
 
 class PolymorphicField extends Field
 {
@@ -16,14 +16,24 @@ class PolymorphicField extends Field
     public $component = 'polymorphic-field';
 
     /**
+     * The column name (for _id and _type)
+     *
+     * @var string
+     */
+    protected $columnName;
+
+    /**
      * PolymorphicField constructor.
      *
      * @param string $name
      * @param null $attribute
+     * @param null $columnName
      */
-    public function __construct($name, $attribute = null)
+    public function __construct($name, $attribute = null, $columnName = null)
     {
         parent::__construct($name, $attribute);
+
+        $this->columnName = $columnName ?: $attribute;
 
         $this->withMeta(['types' => []]);
 
@@ -62,10 +72,10 @@ class PolymorphicField extends Field
      */
     public function resolveForDisplay($model, $attribute = null)
     {
-        parent::resolveForDisplay($model, $this->attribute.'_type');
+        parent::resolveForDisplay($model, $this->columnName.'_type');
 
         foreach ($this->meta['types'] as &$type) {
-            $type['active'] = $this->mapToKey($type['value']) == $model->{$this->attribute . '_type'};
+            $type['active'] = $this->mapToKey($type['value']) == $model->{$this->columnName . '_type'};
 
             foreach ($type['active'] ? $type['fields'] : [] as $field) {
                 $field->resolveForDisplay($model->{$this->attribute});
@@ -82,16 +92,16 @@ class PolymorphicField extends Field
      */
     protected function resolveAttribute($model, $attribute)
     {
-        $result = $this->mapToClass($model->{$this->attribute . '_type'});
+        $result = $this->mapToClass($model->{$this->columnName . '_type'});
 
         foreach ($this->meta['types'] as $type) {
 
             $relatedModel = new $type['value'];
 
-            if($this->mapToKey($type['value']) == $model->{$this->attribute . '_type'}) {
+            if($this->mapToKey($type['value']) == $model->{$this->columnName . '_type'}) {
                 $relatedModel = ($model->{$this->attribute})
                     ? $model->{$this->attribute}
-                    : $relatedModel->newQuery()->findOrFail($model->{$this->attribute . '_id'});
+                    : $relatedModel->newQuery()->findOrFail($model->{$this->columnName . '_id'});
             }
 
             foreach ($type['fields'] as $field) {
@@ -113,16 +123,23 @@ class PolymorphicField extends Field
      */
     protected function fillAttributeFromRequest(NovaRequest $request, $requestAttribute, $model, $attribute)
     {
+        if ($this->isNullValue($request->get($attribute))) {
+            $model->{$this->columnName . '_id'} = null;
+            $model->{$this->columnName . '_type'} = '';
+
+            return;
+        }
+
         foreach ($this->meta['types'] as $type) {
 
             if($request->get($attribute) == $type['value']) {
                 $relatedModel = new $type['value'];
 
-                if($this->mapToKey($type['value']) == $model->{$this->attribute . '_type'}) {
-                    $relatedModel = $relatedModel->newQuery()->findOrFail($model->{$this->attribute . '_id'});
-                } elseif(! is_null($model->{$this->attribute . '_type'})) {
-                    $oldRelatedClass = $this->mapToClass($model->{$this->attribute . '_type'});
-                    $oldRelatedModel = (new $oldRelatedClass)->newQuery()->findOrFail($model->{$this->attribute . '_id'});
+                if($this->mapToKey($type['value']) == $model->{$this->columnName . '_type'}) {
+                    $relatedModel = $relatedModel->newQuery()->findOrFail($model->{$this->columnName . '_id'});
+                } elseif(! is_null($model->{$this->columnName . '_type'})) {
+                    $oldRelatedClass = $this->mapToClass($model->{$this->columnName . '_type'});
+                    $oldRelatedModel = (new $oldRelatedClass)->newQuery()->findOrFail($model->{$this->columnName . '_id'});
                     $oldRelatedModel->delete();
                 }
 
@@ -132,8 +149,8 @@ class PolymorphicField extends Field
 
                 $relatedModel->save();
 
-                $model->{$this->attribute.'_id'} = $relatedModel->id;
-                $model->{$this->attribute.'_type'} = $this->mapToKey($type['value']);
+                $model->{$this->columnName . '_id'} = $relatedModel->id;
+                $model->{$this->columnName . '_type'} = $this->mapToKey($type['value']);
             }
 
         }
